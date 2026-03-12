@@ -148,6 +148,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .btn-red     { background: #b91c1c; color: white; }
   .btn-green   { background: #047857; color: white; }
   .btn-blue    { background: #1d4ed8; color: white; }
+  .btn-small { padding: 7px 13px; font-size: 0.82rem; }
   .btn-row { display: flex; gap: 10px; }
   .btn-row .btn { flex: 1; }
   .alert {
@@ -170,6 +171,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     color: var(--text-muted); padding: 3px 9px; font-size: 0.78rem; cursor: pointer;
   }
   .cancel-btn:hover { border-color: #ef4444; color: #ef4444; }
+  .action-row {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 12px;
+  }
+  .action-row select {
+    flex: 1; min-width: 120px; padding: 7px 10px; font-size: 0.84rem;
+  }
+  .divider {
+    border: none; border-top: 1px solid var(--border); margin: 28px 0 0;
+  }
   #login-section { }
   #app-section { display: none; }
 </style>
@@ -177,7 +187,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <body>
 <div class="card">
   <h1>Pi-hole Helper</h1>
-  <p class="tagline">Pause blocking or manage domains — no Pi-hole credentials needed</p>
+  <p class="tagline">Having trouble reaching a website? Start below.</p>
 
   <div id="login-section">
     <div class="form-group">
@@ -191,10 +201,21 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
   <div id="app-section">
 
-    <h2>Connected Instances</h2>
-    <div class="instances" id="instances"></div>
+    <h2>Website not working? Start here.</h2>
+    <div class="form-group">
+      <label>Enter the domain you can't reach</label>
+      <input type="text" id="check-domain" placeholder="example.com"
+             onkeydown="if(event.key==='Enter')checkDomain()">
+    </div>
+    <button class="btn btn-blue" onclick="checkDomain()">Check</button>
+    <div id="check-result"></div>
+
+    <hr class="divider">
 
     <h2>Pause Blocking</h2>
+    <p style="font-size:0.83rem;color:var(--text-muted);margin-bottom:12px">
+      Need access to something that's blocked? Pause filtering temporarily.
+    </p>
     <div class="form-group">
       <label>Duration</label>
       <select id="pause-dur">
@@ -211,7 +232,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <div id="pause-result"></div>
     <div id="active-pauses"></div>
 
-    <h2>Whitelist a Domain</h2>
+    <hr class="divider">
+
+    <h2>Permanently Allow a Domain</h2>
+    <p style="font-size:0.83rem;color:var(--text-muted);margin-bottom:12px">
+      Adds a domain to the allowlist on all Pi-hole instances.
+    </p>
     <div class="form-group">
       <label>Domain</label>
       <input type="text" id="whitelist-domain" placeholder="example.com"
@@ -220,14 +246,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <button class="btn btn-green" onclick="whitelistDomain()">Add to Allowlist</button>
     <div id="whitelist-result"></div>
 
-    <h2>Troubleshoot a Domain</h2>
-    <div class="form-group">
-      <label>Domain to check</label>
-      <input type="text" id="check-domain" placeholder="example.com"
-             onkeydown="if(event.key==='Enter')checkDomain()">
-    </div>
-    <button class="btn btn-blue" onclick="checkDomain()">Check Why It's Blocked</button>
-    <div id="check-result"></div>
+    <hr class="divider">
+
+    <h2>Connected Instances</h2>
+    <div class="instances" id="instances"></div>
 
   </div>
 </div>
@@ -267,6 +289,67 @@ async function login() {
   } else {
     document.getElementById("login-msg").innerHTML =
       '<div class="alert alert-error">Incorrect password</div>';
+  }
+}
+
+async function pauseFromCheck(seconds) {
+  const res = await post("pause/device", {seconds});
+  document.getElementById("check-result").innerHTML +=
+    `<div class="alert ${res.ok ? "alert-success" : "alert-error"}" style="margin-top:8px">${res.message}</div>`;
+}
+
+async function whitelistFromCheck(domain) {
+  const res = await post("whitelist", {domain});
+  document.getElementById("check-result").innerHTML +=
+    `<div class="alert ${res.ok ? "alert-success" : "alert-error"}" style="margin-top:8px">${res.message}</div>`;
+}
+
+async function checkDomain() {
+  const domain = document.getElementById("check-domain").value.trim();
+  if (!domain) return;
+  const el = document.getElementById("check-result");
+  el.innerHTML = '<div class="alert alert-info">Checking...</div>';
+  const res = await post("check", {domain});
+  if (!res.ok) {
+    el.innerHTML = `<div class="alert alert-error">${res.message}</div>`;
+    return;
+  }
+  const d = res.data;
+  if (d.status === "not_blocked") {
+    el.innerHTML = `<div class="alert alert-success">
+      <strong>${domain}</strong> is not being blocked by Pi-hole.
+      The issue may be something else (DNS cache, server down, etc.).
+    </div>`;
+  } else if (d.status === "external_blocked") {
+    el.innerHTML = `<div class="alert alert-warn">
+      <strong>${domain}</strong> is blocked by your upstream DNS provider (${d.upstream}), not by Pi-hole's own lists.<br><br>
+      This is likely a miscategorization. You can request a correction here:<br>
+      <a href="${d.recategorize_url}" target="_blank">${d.recategorize_url}</a>
+    </div>`;
+  } else if (d.status === "pihole_blocked") {
+    el.innerHTML = `<div class="alert alert-warn">
+      <strong>${domain}</strong> is blocked by Pi-hole. What would you like to do?
+      <div class="action-row">
+        <select id="quick-pause-dur">
+          <option value="900">15 min</option>
+          <option value="1800" selected>30 min</option>
+          <option value="3600">1 hour</option>
+          <option value="7200">2 hours</option>
+        </select>
+        <button class="btn btn-orange btn-small"
+          onclick="pauseFromCheck(parseInt(document.getElementById('quick-pause-dur').value))">
+          Pause my device
+        </button>
+        <button class="btn btn-green btn-small"
+          onclick="whitelistFromCheck('${domain}')">
+          Permanently allow
+        </button>
+      </div>
+    </div>`;
+  } else if (d.status === "allowed") {
+    el.innerHTML = `<div class="alert alert-success">
+      <strong>${domain}</strong> is explicitly allowed — Pi-hole isn't blocking it.
+    </div>`;
   }
 }
 

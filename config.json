@@ -13,8 +13,8 @@
   "panel_title": "Pi-hole Helper",
   "schema": {
     "pihole_url": "str",
-    "pihole_password": "str",
-    "app_password": "str",
+    "pihole_password": "password",
+    "app_password": "password",
     "default_pause_minutes": "int?"
   }
 }

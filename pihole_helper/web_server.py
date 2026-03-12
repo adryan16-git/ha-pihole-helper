@@ -66,48 +66,84 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <title>Pi-hole Helper</title>
 <base href="{{BASE}}/">
 <style>
+  :root {
+    --bg:          #f0f4f8;
+    --card-bg:     #ffffff;
+    --text:        #1e293b;
+    --text-muted:  #64748b;
+    --border:      #e2e8f0;
+    --input-bg:    #f8fafc;
+    --input-text:  #1e293b;
+    --chip-bg:     #f1f5f9;
+    --pause-bg:    #f1f5f9;
+    --accent:      #7c3aed;
+    --accent-soft: #ede9fe;
+    --shadow:      0 4px 24px rgba(0,0,0,0.08);
+    --alert-ok-bg: #f0fdf4; --alert-ok-text: #166534; --alert-ok-border: #bbf7d0;
+    --alert-wn-bg: #fff7ed; --alert-wn-text: #9a3412; --alert-wn-border: #fed7aa;
+    --alert-er-bg: #fef2f2; --alert-er-text: #991b1b; --alert-er-border: #fecaca;
+    --alert-in-bg: #eff6ff; --alert-in-text: #1e40af; --alert-in-border: #bfdbfe;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:          #0f172a;
+      --card-bg:     #1e293b;
+      --text:        #cbd5e1;
+      --text-muted:  #64748b;
+      --border:      #334155;
+      --input-bg:    #0f172a;
+      --input-text:  #e2e8f0;
+      --chip-bg:     #0f172a;
+      --pause-bg:    #0f172a;
+      --accent:      #a78bfa;
+      --accent-soft: #3b1e6e;
+      --shadow:      0 8px 40px rgba(0,0,0,0.5);
+      --alert-ok-bg: #052e16; --alert-ok-text: #86efac; --alert-ok-border: #166534;
+      --alert-wn-bg: #431407; --alert-wn-text: #fdba74; --alert-wn-border: #9a3412;
+      --alert-er-bg: #450a0a; --alert-er-text: #fca5a5; --alert-er-border: #991b1b;
+      --alert-in-bg: #0c1a2e; --alert-in-text: #93c5fd; --alert-in-border: #1e40af;
+    }
+  }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    background: #0f172a; color: #cbd5e1; min-height: 100vh;
+    background: var(--bg); color: var(--text); min-height: 100vh;
     display: flex; align-items: flex-start; justify-content: center;
     padding: 24px 16px;
   }
   .card {
-    background: #1e293b; border-radius: 14px; padding: 28px 28px 32px;
-    max-width: 500px; width: 100%; box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+    background: var(--card-bg); border-radius: 14px; padding: 28px 28px 32px;
+    max-width: 500px; width: 100%; box-shadow: var(--shadow);
   }
-  h1 { font-size: 1.4rem; color: #a78bfa; margin-bottom: 4px; }
-  .tagline { color: #64748b; font-size: 0.85rem; margin-bottom: 28px; }
+  h1 { font-size: 1.4rem; color: var(--accent); margin-bottom: 4px; }
+  .tagline { color: var(--text-muted); font-size: 0.85rem; margin-bottom: 28px; }
   h2 {
     font-size: 0.78rem; font-weight: 600; letter-spacing: 0.08em;
-    text-transform: uppercase; color: #7c3aed; margin: 28px 0 14px;
-    padding-bottom: 8px; border-bottom: 1px solid #334155;
+    text-transform: uppercase; color: var(--accent); margin: 28px 0 14px;
+    padding-bottom: 8px; border-bottom: 1px solid var(--border);
   }
-  .instances {
-    display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px;
-  }
+  .instances { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
   .instance-chip {
-    background: #0f172a; border: 1px solid #334155; border-radius: 20px;
-    padding: 4px 12px; font-size: 0.78rem; color: #94a3b8;
+    background: var(--chip-bg); border: 1px solid var(--border); border-radius: 20px;
+    padding: 4px 12px; font-size: 0.78rem; color: var(--text-muted);
     display: flex; align-items: center; gap: 6px;
   }
   .dot { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; }
   .form-group { margin-bottom: 14px; }
-  label { display: block; font-size: 0.82rem; color: #94a3b8; margin-bottom: 5px; }
+  label { display: block; font-size: 0.82rem; color: var(--text-muted); margin-bottom: 5px; }
   input[type=password], input[type=text], select {
-    width: 100%; padding: 9px 13px; background: #0f172a;
-    border: 1px solid #334155; border-radius: 8px; color: #e2e8f0;
+    width: 100%; padding: 9px 13px; background: var(--input-bg);
+    border: 1px solid var(--border); border-radius: 8px; color: var(--input-text);
     font-size: 0.92rem; outline: none; transition: border-color 0.15s;
   }
-  input:focus, select:focus { border-color: #7c3aed; }
+  input:focus, select:focus { border-color: var(--accent); }
   .btn {
     display: inline-flex; align-items: center; justify-content: center;
     padding: 9px 18px; border: none; border-radius: 8px; cursor: pointer;
     font-size: 0.88rem; font-weight: 500; transition: filter 0.15s;
   }
-  .btn:hover { filter: brightness(1.12); }
-  .btn-primary { background: #7c3aed; color: white; width: 100%; padding: 11px; }
+  .btn:hover { filter: brightness(1.1); }
+  .btn-primary { background: var(--accent); color: white; width: 100%; padding: 11px; }
   .btn-orange  { background: #d97706; color: white; }
   .btn-red     { background: #b91c1c; color: white; }
   .btn-green   { background: #047857; color: white; }
@@ -119,20 +155,19 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     font-size: 0.88rem; line-height: 1.6;
   }
   .alert a { color: inherit; font-weight: 600; }
-  .alert-success { background: #052e16; color: #86efac; border: 1px solid #166534; }
-  .alert-warn    { background: #431407; color: #fdba74; border: 1px solid #9a3412; }
-  .alert-error   { background: #450a0a; color: #fca5a5; border: 1px solid #991b1b; }
-  .alert-info    { background: #0c1a2e; color: #93c5fd; border: 1px solid #1e40af; }
+  .alert-success { background: var(--alert-ok-bg); color: var(--alert-ok-text); border: 1px solid var(--alert-ok-border); }
+  .alert-warn    { background: var(--alert-wn-bg); color: var(--alert-wn-text); border: 1px solid var(--alert-wn-border); }
+  .alert-error   { background: var(--alert-er-bg); color: var(--alert-er-text); border: 1px solid var(--alert-er-border); }
+  .alert-info    { background: var(--alert-in-bg); color: var(--alert-in-text); border: 1px solid var(--alert-in-border); }
   .pause-list { margin-top: 14px; }
   .pause-item {
-    background: #0f172a; border-radius: 8px; padding: 9px 13px;
+    background: var(--pause-bg); border-radius: 8px; padding: 9px 13px;
     margin-bottom: 7px; display: flex; justify-content: space-between;
     align-items: center; font-size: 0.84rem;
   }
-  .pause-ip { color: #a78bfa; }
   .cancel-btn {
-    background: none; border: 1px solid #475569; border-radius: 6px;
-    color: #94a3b8; padding: 3px 9px; font-size: 0.78rem; cursor: pointer;
+    background: none; border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text-muted); padding: 3px 9px; font-size: 0.78rem; cursor: pointer;
   }
   .cancel-btn:hover { border-color: #ef4444; color: #ef4444; }
   #login-section { }

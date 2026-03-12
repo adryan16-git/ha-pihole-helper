@@ -1,6 +1,6 @@
 {
   "name": "Pi-hole Helper",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "slug": "pihole_helper",
   "description": "Let trusted users pause Pi-hole blocking or whitelist domains without needing Pi-hole credentials",
   "arch": ["amd64", "aarch64", "armv7", "armhf"],

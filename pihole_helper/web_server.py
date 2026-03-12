@@ -257,18 +257,30 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <script>
 let authToken = null;
 
+const NETWORK_ERR = {ok: false, message: "Could not reach the add-on — try refreshing the page."};
+
 async function post(path, data) {
   const headers = {"Content-Type": "application/json"};
   if (authToken) headers["X-Auth-Token"] = authToken;
-  const r = await fetch(path, {method: "POST", headers, body: JSON.stringify(data)});
-  return r.json();
+  try {
+    const r = await fetch(path, {method: "POST", headers, body: JSON.stringify(data)});
+    return r.json();
+  } catch (e) {
+    console.error("POST", path, e);
+    return NETWORK_ERR;
+  }
 }
 
 async function get(path) {
   const headers = {};
   if (authToken) headers["X-Auth-Token"] = authToken;
-  const r = await fetch(path, {headers});
-  return r.json();
+  try {
+    const r = await fetch(path, {headers});
+    return r.json();
+  } catch (e) {
+    console.error("GET", path, e);
+    return {};
+  }
 }
 
 function showMsg(elId, res) {
@@ -465,6 +477,7 @@ def create_app():
             token = secrets.token_hex(32)
             _sessions[token] = time.time() + SESSION_LIFETIME
             return jsonify({"ok": True, "token": token})
+        logger.warning("Failed login attempt from %s", _get_client_ip())
         return jsonify({"ok": False, "message": "Incorrect password"}), 401
 
     @app.route("/status", methods=["GET"])

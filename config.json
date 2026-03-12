@@ -1,0 +1,20 @@
+{
+  "name": "Pi-hole Helper",
+  "version": "1.0.0",
+  "slug": "pihole_helper",
+  "description": "Let trusted users pause Pi-hole blocking or whitelist domains without needing Pi-hole credentials",
+  "arch": ["amd64", "aarch64", "armv7", "armhf"],
+  "startup": "services",
+  "boot": "auto",
+  "init": false,
+  "ingress": true,
+  "ingress_port": 8098,
+  "panel_icon": "mdi:shield-off-outline",
+  "panel_title": "Pi-hole Helper",
+  "schema": {
+    "pihole_url": "str",
+    "pihole_password": "str",
+    "app_password": "str",
+    "default_pause_minutes": "int?"
+  }
+}

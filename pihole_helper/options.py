@@ -17,17 +17,6 @@ def _get():
     return _opts
 
 
-def pihole_url():
-    url = _get().get("pihole_url", "").strip().rstrip("/")
-    if url and not url.startswith(("http://", "https://")):
-        url = "http://" + url
-    return url
-
-
-def pihole_password():
-    return _get().get("pihole_password", "")
-
-
 def app_password():
     return _get().get("app_password", "")
 

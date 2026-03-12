@@ -3,7 +3,8 @@
 import logging
 import sys
 
-from pihole_helper.web_server import create_app
+from pihole_helper.discovery import discover_instances
+from pihole_helper.web_server import create_app, set_instances
 from pihole_helper import pause_manager
 
 logging.basicConfig(
@@ -20,7 +21,14 @@ PORT = 8098
 def main():
     logger.info("Pi-hole Helper starting up...")
 
-    # Re-arm any pauses that survived an add-on restart
+    instances = discover_instances()
+    if instances:
+        logger.info("Using %d Pi-hole instance(s): %s",
+                    len(instances), ", ".join(i.name for i in instances))
+    else:
+        logger.warning("No Pi-hole instances found — check HA Pi-hole integration is configured")
+
+    set_instances(instances)
     pause_manager.restore_on_startup()
 
     app = create_app()

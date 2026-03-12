@@ -1,32 +1,36 @@
 """Pi-hole Helper — Flask web server and UI."""
 
-import json
 import logging
 import os
 import secrets
 import time
 from functools import wraps
+from typing import List
 
-from flask import Flask, request, jsonify, make_response
+from flask import Flask, request, jsonify
 
 from pihole_helper import pihole_api, pause_manager
+from pihole_helper.pihole_api import PiholeInstance
 from pihole_helper.options import app_password, default_pause_minutes
 
 logger = logging.getLogger("pihole_helper.web")
 
-# In-memory session store: {token: expiry_timestamp}
 _sessions: dict = {}
-SESSION_LIFETIME = 8 * 3600  # 8 hours
+SESSION_LIFETIME = 8 * 3600
 
 INGRESS_PATH = os.environ.get("INGRESS_PATH", "").rstrip("/")
 
-# Cloudflare upstream IPs that indicate external blocking (1.1.1.2/3, 1.0.0.2/3)
-CLOUDFLARE_FAMILIES_UPSTREAMS = {"1.1.1.2", "1.1.1.3", "1.0.0.2", "1.0.0.3"}
-CLOUDFLARE_RECATEGORIZE_URL = "https://radar.cloudflare.com/domains/feedback"
+# Populated on startup by main.py
+_instances: List[PiholeInstance] = []
+
+
+def set_instances(instances: List[PiholeInstance]):
+    global _instances
+    _instances = instances
 
 
 # ---------------------------------------------------------------------------
-# Auth helpers
+# Auth
 # ---------------------------------------------------------------------------
 
 def _get_client_ip() -> str:
@@ -38,9 +42,7 @@ def _get_client_ip() -> str:
 
 def _is_authenticated() -> bool:
     token = request.headers.get("X-Auth-Token") or request.cookies.get("ph_token")
-    if not token:
-        return False
-    return time.time() < _sessions.get(token, 0)
+    return bool(token) and time.time() < _sessions.get(token, 0)
 
 
 def _require_auth(f):
@@ -53,7 +55,7 @@ def _require_auth(f):
 
 
 # ---------------------------------------------------------------------------
-# HTML (single-page, embedded)
+# HTML
 # ---------------------------------------------------------------------------
 
 HTML_TEMPLATE = """<!DOCTYPE html>
@@ -78,10 +80,19 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   h1 { font-size: 1.4rem; color: #a78bfa; margin-bottom: 4px; }
   .tagline { color: #64748b; font-size: 0.85rem; margin-bottom: 28px; }
   h2 {
-    font-size: 0.8rem; font-weight: 600; letter-spacing: 0.08em;
+    font-size: 0.78rem; font-weight: 600; letter-spacing: 0.08em;
     text-transform: uppercase; color: #7c3aed; margin: 28px 0 14px;
     padding-bottom: 8px; border-bottom: 1px solid #334155;
   }
+  .instances {
+    display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px;
+  }
+  .instance-chip {
+    background: #0f172a; border: 1px solid #334155; border-radius: 20px;
+    padding: 4px 12px; font-size: 0.78rem; color: #94a3b8;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; }
   .form-group { margin-bottom: 14px; }
   label { display: block; font-size: 0.82rem; color: #94a3b8; margin-bottom: 5px; }
   input[type=password], input[type=text], select {
@@ -93,10 +104,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .btn {
     display: inline-flex; align-items: center; justify-content: center;
     padding: 9px 18px; border: none; border-radius: 8px; cursor: pointer;
-    font-size: 0.88rem; font-weight: 500; transition: filter 0.15s; gap: 6px;
+    font-size: 0.88rem; font-weight: 500; transition: filter 0.15s;
   }
   .btn:hover { filter: brightness(1.12); }
-  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .btn-primary { background: #7c3aed; color: white; width: 100%; padding: 11px; }
   .btn-orange  { background: #d97706; color: white; }
   .btn-red     { background: #b91c1c; color: white; }
@@ -105,8 +115,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .btn-row { display: flex; gap: 10px; }
   .btn-row .btn { flex: 1; }
   .alert {
-    padding: 11px 15px; border-radius: 8px; margin-top: 16px;
-    font-size: 0.88rem; line-height: 1.5;
+    padding: 11px 15px; border-radius: 8px; margin-top: 14px;
+    font-size: 0.88rem; line-height: 1.6;
   }
   .alert a { color: inherit; font-weight: 600; }
   .alert-success { background: #052e16; color: #86efac; border: 1px solid #166534; }
@@ -120,7 +130,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     align-items: center; font-size: 0.84rem;
   }
   .pause-ip { color: #a78bfa; }
-  .pause-time { color: #64748b; }
   .cancel-btn {
     background: none; border: 1px solid #475569; border-radius: 6px;
     color: #94a3b8; padding: 3px 9px; font-size: 0.78rem; cursor: pointer;
@@ -128,9 +137,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .cancel-btn:hover { border-color: #ef4444; color: #ef4444; }
   #login-section { }
   #app-section { display: none; }
-  .spinner { display: none; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3);
-             border-top-color: white; border-radius: 50%; animation: spin 0.7s linear infinite; }
-  @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
@@ -138,7 +144,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <h1>Pi-hole Helper</h1>
   <p class="tagline">Pause blocking or manage domains — no Pi-hole credentials needed</p>
 
-  <!-- Login -->
   <div id="login-section">
     <div class="form-group">
       <label>Password</label>
@@ -149,10 +154,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <div id="login-msg"></div>
   </div>
 
-  <!-- App -->
   <div id="app-section">
 
-    <!-- Pause blocking -->
+    <h2>Connected Instances</h2>
+    <div class="instances" id="instances"></div>
+
     <h2>Pause Blocking</h2>
     <div class="form-group">
       <label>Duration</label>
@@ -164,19 +170,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       </select>
     </div>
     <div class="btn-row">
-      <button class="btn btn-orange" onclick="pauseDevice()">
-        <span>My Device Only</span>
-      </button>
-      <button class="btn btn-red" onclick="pauseGlobal()">
-        <span>Everyone</span>
-      </button>
+      <button class="btn btn-orange" onclick="pauseDevice()">My Device Only</button>
+      <button class="btn btn-red" onclick="pauseGlobal()">Everyone</button>
     </div>
     <div id="pause-result"></div>
-
-    <!-- Active pauses -->
     <div id="active-pauses"></div>
 
-    <!-- Whitelist -->
     <h2>Whitelist a Domain</h2>
     <div class="form-group">
       <label>Domain</label>
@@ -186,7 +185,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <button class="btn btn-green" onclick="whitelistDomain()">Add to Allowlist</button>
     <div id="whitelist-result"></div>
 
-    <!-- Troubleshoot -->
     <h2>Troubleshoot a Domain</h2>
     <div class="form-group">
       <label>Domain to check</label>
@@ -200,7 +198,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </div>
 
 <script>
-const BASE = "{{BASE}}";
 let authToken = null;
 
 async function post(path, data) {
@@ -217,12 +214,11 @@ async function get(path) {
   return r.json();
 }
 
-function showMsg(elId, res, extra) {
+function showMsg(elId, res) {
   const el = document.getElementById(elId);
   const cls = res.ok ? "alert-success" : "alert-error";
-  const msg = (res.message || "Unknown error") + (extra || "");
-  el.innerHTML = `<div class="alert ${cls}">${msg}</div>`;
-  if (res.ok) setTimeout(() => el.innerHTML = "", 6000);
+  el.innerHTML = `<div class="alert ${cls}">${res.message || "Unknown error"}</div>`;
+  if (res.ok) setTimeout(() => el.innerHTML = "", 7000);
 }
 
 async function login() {
@@ -232,7 +228,7 @@ async function login() {
     authToken = res.token;
     document.getElementById("login-section").style.display = "none";
     document.getElementById("app-section").style.display = "block";
-    loadPauses();
+    loadStatus();
   } else {
     document.getElementById("login-msg").innerHTML =
       '<div class="alert alert-error">Incorrect password</div>';
@@ -241,21 +237,18 @@ async function login() {
 
 async function pauseDevice() {
   const seconds = parseInt(document.getElementById("pause-dur").value);
-  const res = await post("pause/device", {seconds});
-  showMsg("pause-result", res);
-  loadPauses();
+  showMsg("pause-result", await post("pause/device", {seconds}));
+  loadStatus();
 }
 
 async function pauseGlobal() {
   const seconds = parseInt(document.getElementById("pause-dur").value);
-  const res = await post("pause/global", {seconds});
-  showMsg("pause-result", res);
+  showMsg("pause-result", await post("pause/global", {seconds}));
 }
 
 async function cancelPause(ip) {
-  const res = await post("pause/cancel", {ip});
-  showMsg("pause-result", res);
-  loadPauses();
+  showMsg("pause-result", await post("pause/cancel", {ip}));
+  loadStatus();
 }
 
 async function whitelistDomain() {
@@ -272,65 +265,62 @@ async function checkDomain() {
   const el = document.getElementById("check-result");
   el.innerHTML = '<div class="alert alert-info">Checking...</div>';
   const res = await post("check", {domain});
-  el.innerHTML = "";
-
   if (!res.ok) {
     el.innerHTML = `<div class="alert alert-error">${res.message}</div>`;
     return;
   }
-
   const d = res.data;
   if (d.status === "not_blocked") {
-    el.innerHTML = `<div class="alert alert-success">
-      <strong>${domain}</strong> is not being blocked by Pi-hole.
-    </div>`;
+    el.innerHTML = `<div class="alert alert-success"><strong>${domain}</strong> is not being blocked by Pi-hole.</div>`;
   } else if (d.status === "external_blocked") {
     el.innerHTML = `<div class="alert alert-warn">
-      <strong>${domain}</strong> is blocked by your upstream DNS provider
-      (${d.upstream || "external"}), not by Pi-hole's blocklists.<br><br>
-      This may be a miscategorization. You can request a correction here:<br>
+      <strong>${domain}</strong> is blocked by your upstream DNS (${d.upstream}), not by Pi-hole's own blocklists.<br><br>
+      This may be a miscategorization. Request a correction here:<br>
       <a href="${d.recategorize_url}" target="_blank">${d.recategorize_url}</a>
     </div>`;
   } else if (d.status === "pihole_blocked") {
     el.innerHTML = `<div class="alert alert-warn">
       <strong>${domain}</strong> is blocked by Pi-hole (gravity/blocklist).
-      ${d.list_info ? "<br>List ID: " + d.list_info : ""}
-      <br><br>Use the <em>Whitelist</em> section above to allow it.
+      Use <em>Whitelist a Domain</em> above to allow it.
     </div>`;
   } else if (d.status === "allowed") {
-    el.innerHTML = `<div class="alert alert-success">
-      <strong>${domain}</strong> is explicitly allowed (on your allowlist).
-    </div>`;
+    el.innerHTML = `<div class="alert alert-success"><strong>${domain}</strong> is explicitly allowed.</div>`;
   }
 }
 
-async function loadPauses() {
+async function loadStatus() {
   const data = await get("status");
-  const pauses = data.active_pauses || {};
-  const el = document.getElementById("active-pauses");
-  const keys = Object.keys(pauses);
-  if (keys.length === 0) { el.innerHTML = ""; return; }
 
+  // Instances
+  const chips = (data.instances || []).map(i =>
+    `<div class="instance-chip"><span class="dot"></span>${i}</div>`
+  ).join("");
+  document.getElementById("instances").innerHTML = chips || "<span style='color:#64748b;font-size:.85rem'>None discovered</span>";
+
+  // Active pauses
+  const pauses = data.active_pauses || {};
+  const keys = Object.keys(pauses);
+  const el = document.getElementById("active-pauses");
+  if (keys.length === 0) { el.innerHTML = ""; return; }
   let html = '<h2 style="margin-top:20px">Active Pauses</h2><div class="pause-list">';
   for (const ip of keys) {
     const mins = Math.ceil(pauses[ip].remaining_seconds / 60);
     html += `<div class="pause-item">
       <span class="pause-ip">${ip}</span>
-      <span class="pause-time">${mins}m left</span>
+      <span style="color:#64748b">${mins}m left</span>
       <button class="cancel-btn" onclick="cancelPause('${ip}')">Cancel</button>
     </div>`;
   }
-  html += "</div>";
-  el.innerHTML = html;
+  el.innerHTML = html + "</div>";
 }
 
-// Check if already logged in on load
+// Check session on load
 get("status").then(d => {
   if (d.authenticated) {
     authToken = d.token;
     document.getElementById("login-section").style.display = "none";
     document.getElementById("app-section").style.display = "block";
-    loadPauses();
+    loadStatus();
   }
 });
 </script>
@@ -342,10 +332,6 @@ def _render_html():
     base = INGRESS_PATH if INGRESS_PATH else "."
     return HTML_TEMPLATE.replace("{{BASE}}", base)
 
-
-# ---------------------------------------------------------------------------
-# Flask app factory
-# ---------------------------------------------------------------------------
 
 def create_app():
     app = Flask(__name__)
@@ -369,20 +355,24 @@ def create_app():
         resp = {"authenticated": authed}
         if authed:
             resp["token"] = request.headers.get("X-Auth-Token")
+            resp["instances"] = [i.name for i in _instances]
             resp["active_pauses"] = pause_manager.get_active_pauses()
         return jsonify(resp)
 
     @app.route("/pause/device", methods=["POST"])
     @_require_auth
     def pause_device():
+        if not _instances:
+            return jsonify({"ok": False, "message": "No Pi-hole instances discovered"}), 503
         data = request.get_json() or {}
         seconds = int(data.get("seconds", default_pause_minutes() * 60))
         ip = _get_client_ip()
         try:
-            pause_manager.pause_device(ip, seconds)
+            pause_manager.pause_device(ip, seconds, _instances)
             mins = seconds // 60
+            names = ", ".join(i.name for i in _instances)
             return jsonify({"ok": True,
-                            "message": f"Blocking paused for your device ({ip}) for {mins} minutes."})
+                            "message": f"Blocking paused for your device ({ip}) for {mins} minutes on: {names}."})
         except Exception as e:
             logger.exception("Failed to pause device %s", ip)
             return jsonify({"ok": False, "message": str(e)}), 500
@@ -390,16 +380,23 @@ def create_app():
     @app.route("/pause/global", methods=["POST"])
     @_require_auth
     def pause_global():
+        if not _instances:
+            return jsonify({"ok": False, "message": "No Pi-hole instances discovered"}), 503
         data = request.get_json() or {}
         seconds = int(data.get("seconds", default_pause_minutes() * 60))
-        try:
-            pihole_api.set_global_blocking(False, timer_seconds=seconds)
-            mins = seconds // 60
-            return jsonify({"ok": True,
-                            "message": f"Blocking paused for everyone for {mins} minutes. Pi-hole will re-enable automatically."})
-        except Exception as e:
-            logger.exception("Failed to pause global blocking")
-            return jsonify({"ok": False, "message": str(e)}), 500
+        errors = []
+        for instance in _instances:
+            try:
+                pihole_api.set_global_blocking(instance, False, timer_seconds=seconds)
+            except Exception as e:
+                errors.append(f"{instance.name}: {e}")
+        mins = seconds // 60
+        if errors:
+            return jsonify({"ok": False,
+                            "message": f"Some instances failed: {'; '.join(errors)}"}), 500
+        names = ", ".join(i.name for i in _instances)
+        return jsonify({"ok": True,
+                        "message": f"Blocking paused for everyone for {mins} minutes on: {names}."})
 
     @app.route("/pause/cancel", methods=["POST"])
     @_require_auth
@@ -418,73 +415,40 @@ def create_app():
     @app.route("/whitelist", methods=["POST"])
     @_require_auth
     def whitelist():
+        if not _instances:
+            return jsonify({"ok": False, "message": "No Pi-hole instances discovered"}), 503
         data = request.get_json() or {}
         domain = data.get("domain", "").strip().lower()
         if not domain:
             return jsonify({"ok": False, "message": "No domain provided"}), 400
-        try:
-            pihole_api.add_to_allowlist(domain)
-            return jsonify({"ok": True,
-                            "message": f"{domain} has been added to the Pi-hole allowlist."})
-        except Exception as e:
-            logger.exception("Failed to whitelist %s", domain)
-            return jsonify({"ok": False, "message": str(e)}), 500
+        errors = []
+        for instance in _instances:
+            try:
+                pihole_api.add_to_allowlist(instance, domain)
+            except Exception as e:
+                errors.append(f"{instance.name}: {e}")
+        if errors:
+            return jsonify({"ok": False,
+                            "message": f"Some instances failed: {'; '.join(errors)}"}), 500
+        names = ", ".join(i.name for i in _instances)
+        return jsonify({"ok": True,
+                        "message": f"{domain} added to allowlist on: {names}."})
 
     @app.route("/check", methods=["POST"])
     @_require_auth
     def check_domain():
+        if not _instances:
+            return jsonify({"ok": False, "message": "No Pi-hole instances discovered"}), 503
         data = request.get_json() or {}
         domain = data.get("domain", "").strip().lower()
         if not domain:
             return jsonify({"ok": False, "message": "No domain provided"}), 400
         try:
-            result = _diagnose_domain(domain)
+            # Use the first instance for diagnosis
+            result = pihole_api.diagnose_domain(_instances[0], domain)
             return jsonify({"ok": True, "data": result})
         except Exception as e:
             logger.exception("Failed to check domain %s", domain)
             return jsonify({"ok": False, "message": str(e)}), 500
 
     return app
-
-
-def _diagnose_domain(domain: str) -> dict:
-    """Query Pi-hole logs to determine why a domain is blocked (or not)."""
-    sid = pihole_api.get_sid()
-
-    # Fetch the most recent queries for this domain
-    import urllib.request
-    url = pihole_api._url(f"/queries?domain={domain}&length=10")
-    req = urllib.request.Request(url, headers={"sid": sid})
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        result = __import__("json").loads(resp.read())
-
-    queries = result.get("queries", [])
-
-    if not queries:
-        return {"status": "not_blocked"}
-
-    # Look at the most recent query for this domain
-    latest = queries[0]
-    status = latest.get("status", "")
-    upstream = latest.get("upstream") or ""
-    # upstream may include port like "1.1.1.3#53" — strip it
-    upstream_ip = upstream.split("#")[0] if upstream else ""
-
-    if status in ("GRAVITY", "GRAVITY_CNAME", "REGEX_GRAVITY", "DENYLIST"):
-        list_id = latest.get("list_id")
-        return {"status": "pihole_blocked", "list_info": list_id}
-
-    if status in ("EXTERNAL_BLOCKED_NULL", "EXTERNAL_BLOCKED_NXRA",
-                  "EXTERNAL_BLOCKED_IP"):
-        recategorize_url = CLOUDFLARE_RECATEGORIZE_URL
-        return {
-            "status": "external_blocked",
-            "upstream": upstream_ip or "external DNS",
-            "recategorize_url": recategorize_url,
-        }
-
-    if status in ("ALLOW_LIST", "ALLOW_CNAME"):
-        return {"status": "allowed"}
-
-    # Forwarded, cached, etc. — not blocked
-    return {"status": "not_blocked"}

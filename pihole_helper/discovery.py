@@ -22,19 +22,19 @@ def discover_instances():
 
     instances = []
     for entry in data.get("data", {}).get("entries", []):
-        if entry.get("domain") != "pi_hole":
+        if entry.get("domain") != "pi_hole_v6":
             continue
 
         d = entry.get("data", {})
-        host = d.get("host", "")  # may be "192.168.1.6:80"
-        ssl = d.get("ssl", False)
-        api_key = d.get("api_key", "")
-        name = d.get("name") or entry.get("title") or host
+        # pi_hole_v6 stores the full API URL (e.g. "http://pi-hole1.local/api")
+        # pihole_api.py appends /api{path}, so strip the trailing /api
+        url = d.get("url", "").rstrip("/")
+        if url.endswith("/api"):
+            url = url[:-4]
+        password = d.get("password", "")
+        name = d.get("name") or entry.get("title") or url
 
-        scheme = "https" if ssl else "http"
-        url = f"{scheme}://{host}"
-
-        instances.append(PiholeInstance(name=name, url=url, password=api_key))
+        instances.append(PiholeInstance(name=name, url=url, password=password))
         logger.info("Discovered Pi-hole: %s at %s", name, url)
 
     if not instances:

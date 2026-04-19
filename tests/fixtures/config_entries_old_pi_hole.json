@@ -1,0 +1,17 @@
+{
+  "data": {
+    "entries": [
+      {
+        "domain": "pi_hole",
+        "entry_id": "36d86299c5261b8459b097a7a6bd94f1",
+        "title": "Pi-Hole Server",
+        "data": {
+          "host": "192.168.1.6:80",
+          "ssl": false,
+          "api_key": "old-api-key",
+          "name": "Pi-Hole Server"
+        }
+      }
+    ]
+  }
+}
